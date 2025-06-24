@@ -1,5 +1,5 @@
-template-file-path: autoscaling-automation.yml
+template-file-path: ./autoscaling-automation.yml
 parameters:
-  - ParameterKey: KeyName
-    ParameterValue: vpc-lab-ec2-key-pair
-tags: { }
+  - parameter-key: KeyName
+    parameter-value: vpc-lab-ec2-key-pair
+tags: {}
