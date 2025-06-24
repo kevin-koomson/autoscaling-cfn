@@ -142,7 +142,7 @@ Resources:
             <html>
             <head><title>Instance Info</title></head>
             <body>
-            <h1>Hello from $(hostname -I | awk '{print $1}') / $(curl -s http://169.254.169.254/latest/meta-data/instance-id)</h1>
+            <h1>Hello, from $(hostname -I | awk '{print $1}') / $(curl -s http://169.254.169.254/latest/meta-data/instance-id)</h1>
             <form action="/stress" method="get">
             <button type="submit">Stress CPU</button>
             </form>
