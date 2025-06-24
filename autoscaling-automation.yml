@@ -27,15 +27,15 @@ Resources:
     Type: AWS::EC2::Subnet
     Properties:
       VpcId: !Ref Week3AsgVpc
-      CidrBlock: 12.0.3.0/24
-      AvailabilityZoneId: eu1-az2
+      CidrBlock: 10.0.1.0/24
+      AvailabilityZoneId: euc1-az2
 
   Week3PublicSubnet1b:
     Type: AWS::EC2::Subnet
     Properties:
       VpcId: !Ref Week3AsgVpc
-      CidrBlock: 12.0.5.0/24
-      AvailabilityZoneId: eu1-az3
+      CidrBlock: 10.0.3.0/24
+      AvailabilityZoneId: euc1-az3
 
   Week3RouteTable:
     Type: AWS::EC2::RouteTable
@@ -46,13 +46,13 @@ Resources:
     Type: AWS::EC2::SubnetRouteTableAssociation
     Properties:
       RouteTableId: !Ref Week3RouteTable
-      SubnetId: Week3PublicSubnet1a
+      SubnetId: !Ref Week3PublicSubnet1a
 
   Subnet1bRouteTableAssociation:
     Type: AWS::EC2::SubnetRouteTableAssociation
     Properties:
       RouteTableId: !Ref Week3RouteTable
-      SubnetId: Week3PublicSubnet1bWeek3PublicSubnet1bWeek3PublicSubnet1b
+      SubnetId: !Ref Week3PublicSubnet1b
 
   DefaultRoute:
     Type: AWS::EC2::Route
@@ -74,15 +74,14 @@ Resources:
   Week3AlbSgHttp:
     Type: AWS::EC2::SecurityGroup
     Properties:
-      GroupDescription: Allow http requests
+      GroupDescription: Allow HTTP requests
       GroupName: week3-alb-sb-http
-      SecurityGroupEgress:
-        - CidrIp: 0.0.0.0/0
-          IpProtocol: tcp
-      SecurityGroupIngress:
-        - CidrIp: 0.0.0.0/0
-          IpProtocol: tcp
       VpcId: !Ref Week3AsgVpc
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: 0.0.0.0/0
 
   Week3Alb:
     Type: AWS::ElasticLoadBalancingV2::LoadBalancer
@@ -93,14 +92,18 @@ Resources:
       SecurityGroups:
         - !Ref Week3AlbSgHttp
       Type: application
+      Subnets:
+        - !Ref Week3PublicSubnet1a
+        - !Ref Week3PublicSubnet1b
+
 
   Week3AlbListener:
     Type: AWS::ElasticLoadBalancingV2::Listener
     Properties:
       DefaultActions:
-        Type: forward
-        TargetGroupArn: !Ref Week3TargetGroup
-      LoadBalancerArn: !Ref Week3AlbSgHttp
+        - Type: forward
+          TargetGroupArn: !Ref Week3TargetGroup
+      LoadBalancerArn: !Ref Week3Alb
       Port: 80
       Protocol: HTTP
 
@@ -112,8 +115,11 @@ Resources:
       SecurityGroupIngress:
         - CidrIp: 0.0.0.0/0
           IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
         - CidrIp: 0.0.0.0/0
           IpProtocol: tcp
+          FromPort: 22
           ToPort: 22
       VpcId: !Ref Week3AsgVpc
 
@@ -169,7 +175,7 @@ Resources:
   week3AsgScalingPolicy:
     Type: AWS::AutoScaling::ScalingPolicy
     Properties:
-      AutoScalingGroupName: !Ref Week3AsgLt
+      AutoScalingGroupName: !Ref Week3Asg
       PolicyType: TargetTrackingScaling
       TargetTrackingConfiguration:
         PredefinedMetricSpecification:
