@@ -46,13 +46,13 @@ Resources:
     Type: AWS::EC2::SubnetRouteTableAssociation
     Properties:
       RouteTableId: !Ref Week3RouteTable
-      SubnetId: Week3PublicSubnet1a
+      SubnetId: !Ref Week3PublicSubnet1a
 
   Subnet1bRouteTableAssociation:
     Type: AWS::EC2::SubnetRouteTableAssociation
     Properties:
       RouteTableId: !Ref Week3RouteTable
-      SubnetId: Week3PublicSubnet1b
+      SubnetId: !Ref Week3PublicSubnet1b
 
   DefaultRoute:
     Type: AWS::EC2::Route
