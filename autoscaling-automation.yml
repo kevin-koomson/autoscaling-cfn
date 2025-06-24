@@ -101,8 +101,8 @@ Resources:
     Type: AWS::ElasticLoadBalancingV2::Listener
     Properties:
       DefaultActions:
-        Type: forward
-        TargetGroupArn: !Ref Week3TargetGroup
+        - Type: forward
+          TargetGroupArn: !Ref Week3TargetGroup
       LoadBalancerArn: !Ref Week3Alb
       Port: 80
       Protocol: HTTP
