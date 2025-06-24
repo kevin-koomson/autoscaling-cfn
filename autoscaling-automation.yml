@@ -175,7 +175,7 @@ Resources:
   week3AsgScalingPolicy:
     Type: AWS::AutoScaling::ScalingPolicy
     Properties:
-      AutoScalingGroupName: !Ref Week3AsgLt
+      AutoScalingGroupName: !Ref Week3Asg
       PolicyType: TargetTrackingScaling
       TargetTrackingConfiguration:
         PredefinedMetricSpecification:
