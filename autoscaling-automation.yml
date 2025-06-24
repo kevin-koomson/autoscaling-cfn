@@ -70,6 +70,9 @@ Resources:
       ProtocolVersion: HTTP1
       TargetType: instance
       VpcId: !Ref Week3AsgVpc
+      HealthCheckPath: /
+      Matcher:
+        HttpCode: 200
 
   Week3AlbSgHttp:
     Type: AWS::EC2::SecurityGroup
@@ -96,7 +99,6 @@ Resources:
         - !Ref Week3PublicSubnet1a
         - !Ref Week3PublicSubnet1b
 
-
   Week3AlbListener:
     Type: AWS::ElasticLoadBalancingV2::Listener
     Properties:
@@ -111,7 +113,7 @@ Resources:
     Type: AWS::EC2::SecurityGroup
     Properties:
       GroupDescription: Allow ssh and http requests
-      GroupName: String
+      GroupName: Week3LaunchTemplate
       SecurityGroupIngress:
         - CidrIp: 0.0.0.0/0
           IpProtocol: tcp
@@ -134,24 +136,32 @@ Resources:
         SecurityGroupIds:
           - !Ref Week3LtSg
         UserData:
-          Fn::Base64: |
+          Fn::Base64: !Sub |
             #!/bin/bash
             yum update -y
             yum install -y httpd stress
             systemctl enable httpd
             systemctl start httpd
+
+            INSTANCE_ID=$(curl -s http://169.254.169.254/latest/meta-data/instance-id)
+            IP_ADDRESS=$(hostname -I | awk '{print $1}')
+
             cat <<EOF > /var/www/html/index.html
             <html>
             <head><title>Instance Info</title></head>
             <body>
-            <h1>Hello, from $(hostname -I | awk '{print $1}') / $(curl -s http://169.254.169.254/latest/meta-data/instance-id)</h1>
+            <h1>Hello, from $IP_ADDRESS / $INSTANCE_ID</h1>
             <form action="/stress" method="get">
             <button type="submit">Stress CPU</button>
             </form>
             </body>
             </html>
             EOF
-            echo -e '#!/bin/bash\nstress --cpu 1 --timeout 60 &' > /var/www/html/stress
+
+            cat <<EOF > /var/www/html/stress
+            #!/bin/bash
+            stress --cpu 1 --timeout 60 &
+            EOF
             chmod +x /var/www/html/stress
 
   Week3Asg:
