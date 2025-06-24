@@ -1,0 +1,181 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: VPC, Subnets, Internet Gateway, Route Table, Load Balancer, Launch Template, Auto Scaling Group
+
+Parameters:
+  KeyName:
+    Description: Name of an existing EC2 KeyPair to enable SSH access to the instances
+    Type: AWS::EC2::KeyPair::KeyName
+    ConstraintDescription: Must be the name of an existing EC2 KeyPair.
+
+  LatestAmiId:
+    Type: "AWS::SSM::Parameter::Value<AWS::EC2::Image::Id>"
+    Default: "/aws/service/ami-amazon-linux-latest/amzn2-ami-hvm-x86_64-gp2"
+
+Resources:
+  # --- VPC and Networking ---
+  Week3AsgVpc:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: 10.0.0.0/16
+
+  Week3InternetGateway:
+    Type: AWS::EC2::InternetGateway
+
+  AttachInternetGateway:
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties:
+      VpcId: !Ref Week3AsgVpc
+      InternetGatewayId: !Ref Week3InternetGateway
+
+  Week3PublicSubnet1a:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref Week3AsgVpc
+      CidrBlock: 12.0.3.0/24
+      AvailabilityZoneId: eu1-az2
+
+  Week3PublicSubnet1b:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref Week3AsgVpc
+      CidrBlock: 12.0.5.0/24
+      AvailabilityZoneId: eu1-az3
+
+  Week3RouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref Week3AsgVpc
+
+  Subnet1aRouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      RouteTableId: !Ref Week3RouteTable
+      SubnetId: Week3PublicSubnet1a
+
+  Subnet1bRouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      RouteTableId: !Ref Week3RouteTable
+      SubnetId: Week3PublicSubnet1bWeek3PublicSubnet1bWeek3PublicSubnet1b
+
+  DefaultRoute:
+    Type: AWS::EC2::Route
+    Properties:
+      RouteTableId: !Ref Week3RouteTable
+      DestinationCidrBlock: 0.0.0.0/0
+      GatewayId: !Ref Week3InternetGateway
+
+  Week3TargetGroup:
+    Type: AWS::ElasticLoadBalancingV2::TargetGroup
+    Properties:
+      Name: week3-target-ec2
+      Port: 80
+      Protocol: HTTP
+      ProtocolVersion: HTTP1
+      TargetType: instance
+      VpcId: !Ref Week3AsgVpc
+
+  Week3AlbSgHttp:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Allow http requests
+      GroupName: week3-alb-sb-http
+      SecurityGroupEgress:
+        - CidrIp: 0.0.0.0/0
+          IpProtocol: tcp
+      SecurityGroupIngress:
+        - CidrIp: 0.0.0.0/0
+          IpProtocol: tcp
+      VpcId: !Ref Week3AsgVpc
+
+  Week3Alb:
+    Type: AWS::ElasticLoadBalancingV2::LoadBalancer
+    Properties:
+      IpAddressType: ipv4
+      Name: week3-asg-alb
+      Scheme: internet-facing
+      SecurityGroups:
+        - !Ref Week3AlbSgHttp
+      Type: application
+
+  Week3AlbListener:
+    Type: AWS::ElasticLoadBalancingV2::Listener
+    Properties:
+      DefaultActions:
+        Type: forward
+        TargetGroupArn: !Ref Week3TargetGroup
+      LoadBalancerArn: !Ref Week3AlbSgHttp
+      Port: 80
+      Protocol: HTTP
+
+  Week3LtSg:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Allow ssh and http requests
+      GroupName: String
+      SecurityGroupIngress:
+        - CidrIp: 0.0.0.0/0
+          IpProtocol: tcp
+        - CidrIp: 0.0.0.0/0
+          IpProtocol: tcp
+          ToPort: 22
+      VpcId: !Ref Week3AsgVpc
+
+  Week3AsgLt:
+    Type: AWS::EC2::LaunchTemplate
+    Properties:
+      LaunchTemplateName: Week3AsgLt
+      LaunchTemplateData:
+        ImageId: ami-0d96384eb85afa622
+        InstanceType: t2.micro
+        KeyName: !Ref KeyName
+        SecurityGroupIds:
+          - !Ref Week3LtSg
+        UserData:
+          Fn::Base64: !Sub |
+            #!/bin/bash
+            yum update -y
+            yum install -y httpd stress
+            systemctl enable httpd
+            systemctl start httpd
+            cat <<EOF > /var/www/html/index.html
+            <html>
+            <head><title>Instance Info</title></head>
+            <body>
+            <h1>Hello from $(hostname -I | awk '{print $1}') / $(curl -s http://169.254.169.254/latest/meta-data/instance-id)</h1>
+            <form action="/stress" method="get">
+            <button type="submit">Stress CPU</button>
+            </form>
+            </body>
+            </html>
+            EOF
+            echo -e '#!/bin/bash\nstress --cpu 1 --timeout 60 &' > /var/www/html/stress
+            chmod +x /var/www/html/stress
+
+  Week3Asg:
+    Type: AWS::AutoScaling::AutoScalingGroup
+    Properties:
+      AutoScalingGroupName: week3-autoscaling-group
+      LaunchTemplate:
+        LaunchTemplateId: !Ref Week3AsgLt
+        Version: !GetAtt Week3AsgLt.LatestVersionNumber
+      VPCZoneIdentifier:
+        - !Ref Week3PublicSubnet1a
+        - !Ref Week3PublicSubnet1b
+      TargetGroupARNs:
+        - !Ref Week3TargetGroup
+      HealthCheckType: ELB
+      HealthCheckGracePeriod: 30
+      DesiredCapacity: 1
+      MaxSize: 3
+      MinSize: 1
+
+  week3AsgScalingPolicy:
+    Type: AWS::AutoScaling::ScalingPolicy
+    Properties:
+      AutoScalingGroupName: !Ref Week3AsgLt
+      PolicyType: TargetTrackingScaling
+      TargetTrackingConfiguration:
+        PredefinedMetricSpecification:
+          PredefinedMetricType: ASGAverageCPUUtilization
+        TargetValue: 50
