@@ -1,193 +1,373 @@
 AWSTemplateFormatVersion: "2010-09-09"
-Description: VPC, Subnets, Internet Gateway, Route Table, Load Balancer, Launch Template, Auto Scaling Group
+Description: Auto Scaling Apache Web Server with ALB and CPU-based Scaling
 
 Parameters:
-  KeyName:
-    Description: Name of an existing EC2 KeyPair to enable SSH access to the instances
+  AmiId:
+    Type: String
+    Description: AMI ID for EC2 instances
+    Default: "{{resolve:ssm:/autolab/frankfurt/ami-id:1}}"
+
+  LabTagValue:
+    Type: String
+    Default: week3_lab1
+
+  KeyPairName:
+    Description: Name of existing EC2 KeyPair to enable SSH access to the instances
     Type: AWS::EC2::KeyPair::KeyName
-    ConstraintDescription: Must be the name of an existing EC2 KeyPair.
+    Default: secure-vpc-key-pair
 
 Resources:
-  # --- VPC and Networking ---
-  Week3AsgVpc:
+  VPC:
     Type: AWS::EC2::VPC
     Properties:
-      CidrBlock: 10.0.0.0/16
+      CidrBlock: 10.20.0.0/16
+      EnableDnsSupport: true
+      EnableDnsHostnames: true
+      Tags:
+        - Key: Name
+          Value: AutoScalingLabVPC
+        - Key: lab
+          Value: !Ref LabTagValue
 
-  Week3InternetGateway:
+  InternetGateway:
     Type: AWS::EC2::InternetGateway
+    Properties:
+      Tags:
+        - Key: lab
+          Value: !Ref LabTagValue
 
-  AttachInternetGateway:
+  AttachGateway:
     Type: AWS::EC2::VPCGatewayAttachment
     Properties:
-      VpcId: !Ref Week3AsgVpc
-      InternetGatewayId: !Ref Week3InternetGateway
+      VpcId: !Ref VPC
+      InternetGatewayId: !Ref InternetGateway
 
-  Week3PublicSubnet1a:
+  PublicSubnet:
     Type: AWS::EC2::Subnet
     Properties:
-      VpcId: !Ref Week3AsgVpc
-      CidrBlock: 10.0.1.0/24
-      AvailabilityZoneId: euc1-az2
+      VpcId: !Ref VPC
+      CidrBlock: 10.20.1.0/24
+      MapPublicIpOnLaunch: true
+      AvailabilityZone: !Select [0, !GetAZs ""]
+      Tags:
+        - Key: lab
+          Value: !Ref LabTagValue
 
-  Week3PublicSubnet1b:
+  PublicSubnet2:
     Type: AWS::EC2::Subnet
     Properties:
-      VpcId: !Ref Week3AsgVpc
-      CidrBlock: 10.0.3.0/24
-      AvailabilityZoneId: euc1-az3
+      VpcId: !Ref VPC
+      CidrBlock: 10.20.3.0/24
+      MapPublicIpOnLaunch: true
+      AvailabilityZone: !Select [1, !GetAZs ""]
+      Tags:
+        - Key: lab
+          Value: !Ref LabTagValue
 
-  Week3RouteTable:
+  PrivateSubnet:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC
+      CidrBlock: 10.20.2.0/24
+      AvailabilityZone: !Select [0, !GetAZs ""]
+      Tags:
+        - Key: lab
+          Value: !Ref LabTagValue
+
+  PrivateSubnet2:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC
+      CidrBlock: 10.20.4.0/24
+      AvailabilityZone: !Select [1, !GetAZs ""]
+      Tags:
+        - Key: lab
+          Value: !Ref LabTagValue
+
+  PublicRouteTable:
     Type: AWS::EC2::RouteTable
     Properties:
-      VpcId: !Ref Week3AsgVpc
+      VpcId: !Ref VPC
+      Tags:
+        - Key: lab
+          Value: !Ref LabTagValue
 
-  Subnet1aRouteTableAssociation:
-    Type: AWS::EC2::SubnetRouteTableAssociation
-    Properties:
-      RouteTableId: !Ref Week3RouteTable
-      SubnetId: !Ref Week3PublicSubnet1a
-
-  Subnet1bRouteTableAssociation:
-    Type: AWS::EC2::SubnetRouteTableAssociation
-    Properties:
-      RouteTableId: !Ref Week3RouteTable
-      SubnetId: !Ref Week3PublicSubnet1b
-
-  DefaultRoute:
+  PublicRoute:
     Type: AWS::EC2::Route
+    DependsOn: AttachGateway
     Properties:
-      RouteTableId: !Ref Week3RouteTable
+      RouteTableId: !Ref PublicRouteTable
       DestinationCidrBlock: 0.0.0.0/0
-      GatewayId: !Ref Week3InternetGateway
+      GatewayId: !Ref InternetGateway
 
-  Week3TargetGroup:
-    Type: AWS::ElasticLoadBalancingV2::TargetGroup
+  PublicSubnetRouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
     Properties:
-      Name: week3-target-ec2
-      Port: 80
-      Protocol: HTTP
-      ProtocolVersion: HTTP1
-      TargetType: instance
-      VpcId: !Ref Week3AsgVpc
-      HealthCheckPath: /
-      Matcher:
-        HttpCode: 200
+      SubnetId: !Ref PublicSubnet
+      RouteTableId: !Ref PublicRouteTable
 
-  Week3AlbSgHttp:
+  PublicSubnet2RouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PublicSubnet2
+      RouteTableId: !Ref PublicRouteTable
+
+  LoadBalancerSecurityGroup:
     Type: AWS::EC2::SecurityGroup
     Properties:
-      GroupDescription: Allow HTTP requests
-      GroupName: week3-alb-sb-http
-      VpcId: !Ref Week3AsgVpc
+      GroupDescription: Allow HTTP from internet
+      VpcId: !Ref VPC
       SecurityGroupIngress:
         - IpProtocol: tcp
           FromPort: 80
           ToPort: 80
           CidrIp: 0.0.0.0/0
+      Tags:
+        - Key: lab
+          Value: !Ref LabTagValue
 
-  Week3Alb:
-    Type: AWS::ElasticLoadBalancingV2::LoadBalancer
+  # --- SSM Role and Instance Profile ---
+  SSMRole:
+    Type: AWS::IAM::Role
     Properties:
-      IpAddressType: ipv4
-      Name: week3-asg-alb
-      Scheme: internet-facing
-      SecurityGroups:
-        - !Ref Week3AlbSgHttp
-      Type: application
-      Subnets:
-        - !Ref Week3PublicSubnet1a
-        - !Ref Week3PublicSubnet1b
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ec2.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore
+      Tags:
+        - Key: lab
+          Value: !Ref LabTagValue
 
-  Week3AlbListener:
-    Type: AWS::ElasticLoadBalancingV2::Listener
+  InstanceProfile:
+    Type: AWS::IAM::InstanceProfile
     Properties:
-      DefaultActions:
-        - Type: forward
-          TargetGroupArn: !Ref Week3TargetGroup
-      LoadBalancerArn: !Ref Week3Alb
-      Port: 80
-      Protocol: HTTP
+      Roles:
+        - !Ref SSMRole
 
-  Week3LtSg:
+  InstanceSecurityGroup:
     Type: AWS::EC2::SecurityGroup
     Properties:
-      GroupDescription: Allow ssh and http requests
-      GroupName: Week3LaunchTemplate
+      GroupDescription: Enable HTTP access from ALB and SSH access
+      VpcId: !Ref VPC
       SecurityGroupIngress:
-        - CidrIp: 0.0.0.0/0
-          IpProtocol: tcp
+        - IpProtocol: tcp
           FromPort: 80
           ToPort: 80
-        - CidrIp: 0.0.0.0/0
-          IpProtocol: tcp
+          SourceSecurityGroupId: !Ref LoadBalancerSecurityGroup
+        - IpProtocol: tcp
           FromPort: 22
           ToPort: 22
-      VpcId: !Ref Week3AsgVpc
+          CidrIp: 0.0.0.0/0
+      Tags:
+        - Key: lab
+          Value: !Ref LabTagValue
 
-  Week3AsgLt:
+  LaunchTemplate:
     Type: AWS::EC2::LaunchTemplate
     Properties:
-      LaunchTemplateName: Week3AsgLt
+      LaunchTemplateName: WebLaunchTemplate
       LaunchTemplateData:
-        ImageId: ami-0d96384eb85afa622
+        ImageId: !Ref AmiId
         InstanceType: t2.micro
-        KeyName: !Ref KeyName
+        IamInstanceProfile:
+          Arn: !GetAtt InstanceProfile.Arn
         SecurityGroupIds:
-          - !Ref Week3LtSg
+          - !GetAtt InstanceSecurityGroup.GroupId
+        KeyName: !Ref KeyPairName
         UserData:
           Fn::Base64: !Sub |
-            #!/bin/bash
+            #!/bin/bash -xe
             yum update -y
             yum install -y httpd stress
             systemctl enable httpd
             systemctl start httpd
 
-            INSTANCE_ID=$(curl -s http://169.254.169.254/latest/meta-data/instance-id)
-            IP_ADDRESS=$(hostname -I | awk '{print $1}')
+            # Use IMDSv2 to get instance metadata
+            TOKEN=$(curl -X PUT "http://169.254.169.254/latest/api/token" \
+                          -H "X-aws-ec2-metadata-token-ttl-seconds: 21600")
+
+            INSTANCE_ID=$(curl -s -H "X-aws-ec2-metadata-token: $TOKEN" \
+                          http://169.254.169.254/latest/meta-data/instance-id)
+
+            IP_ADDRESS=$(curl -s -H "X-aws-ec2-metadata-token: $TOKEN" \
+                          http://169.254.169.254/latest/meta-data/local-ipv4)
 
             cat <<EOF > /var/www/html/index.html
             <html>
-            <head><title>Instance Info</title></head>
+            <head>
+                <title>Auto Scaling Lab</title>
+                <style>
+                    body { font-family: Arial, sans-serif; text-align: center; margin-top: 50px; }
+                    button { padding: 10px 20px; font-size: 14px; margin-top: 20px; }
+                </style>
+            </head>
             <body>
-            <h1>Hello, from $IP_ADDRESS / $INSTANCE_ID</h1>
-            <form action="/stress" method="get">
-            <button type="submit">Stress CPU</button>
-            </form>
+                <h1>Hello from $IP_ADDRESS / $INSTANCE_ID</h1>
+                <p>Welcome to my auto-scaled Apache Web server.</p>
+                <button onclick="stressCPU()">Stress CPU</button>
+                <script>
+                    function stressCPU() {
+                        fetch('/stress-cpu', { method: 'POST' })
+                            .then(response => alert('CPU stress started! Over 50% CPU utilization triggers scaling'))
+                            .catch(error => alert('Error: ' + error));
+                    }
+                </script>
             </body>
             </html>
             EOF
 
-            cat <<EOF > /var/www/html/stress
+            # Create endpoint for CPU stress
+            cat <<EOF > /var/www/html/stress-cpu
             #!/bin/bash
-            stress --cpu 1 --timeout 60 &
+            echo "Content-type: text/html"
+            echo ""
+            echo "<html><body>"
+            echo "Starting CPU stress test for 300 seconds..."
+            echo "</body></html>"
+            nohup stress --cpu 2 --timeout 300 >/dev/null 2>&1 &
             EOF
-            chmod +x /var/www/html/stress
+            chmod +x /var/www/html/stress-cpu
+            ln -s /var/www/html/stress-cpu /var/www/cgi-bin/stress-cpu
 
-  Week3Asg:
+      TagSpecifications:
+        - ResourceType: launch-template
+          Tags:
+            - Key: lab
+              Value: !Ref LabTagValue
+
+  TargetGroup:
+    Type: AWS::ElasticLoadBalancingV2::TargetGroup
+    Properties:
+      Name: AutoScalingLabTG
+      VpcId: !Ref VPC
+      Port: 80
+      Protocol: HTTP
+      TargetType: instance
+      HealthCheckPath: /index.html
+      HealthCheckIntervalSeconds: 30
+      HealthCheckTimeoutSeconds: 5
+      HealthyThresholdCount: 2
+      UnhealthyThresholdCount: 2
+      Tags:
+        - Key: lab
+          Value: !Ref LabTagValue
+
+  LoadBalancer:
+    Type: AWS::ElasticLoadBalancingV2::LoadBalancer
+    Properties:
+      Name: AutoScalingALB
+      Subnets:
+        - !Ref PublicSubnet
+        - !Ref PublicSubnet2
+      SecurityGroups:
+        - !Ref LoadBalancerSecurityGroup
+      Scheme: internet-facing
+      Type: application
+      Tags:
+        - Key: lab
+          Value: !Ref LabTagValue
+
+  Listener:
+    Type: AWS::ElasticLoadBalancingV2::Listener
+    Properties:
+      DefaultActions:
+        - Type: forward
+          TargetGroupArn: !Ref TargetGroup
+      LoadBalancerArn: !Ref LoadBalancer
+      Port: 80
+      Protocol: HTTP
+
+  AutoScalingGroup:
     Type: AWS::AutoScaling::AutoScalingGroup
     Properties:
-      AutoScalingGroupName: week3-autoscaling-group
-      LaunchTemplate:
-        LaunchTemplateId: !Ref Week3AsgLt
-        Version: !GetAtt Week3AsgLt.LatestVersionNumber
       VPCZoneIdentifier:
-        - !Ref Week3PublicSubnet1a
-        - !Ref Week3PublicSubnet1b
+        - !Ref PublicSubnet
+        - !Ref PublicSubnet2
+      MinSize: "1"
+      MaxSize: "3"
+      DesiredCapacity: "1"
       TargetGroupARNs:
-        - !Ref Week3TargetGroup
+        - !Ref TargetGroup
+      LaunchTemplate:
+        LaunchTemplateId: !Ref LaunchTemplate
+        Version: !GetAtt LaunchTemplate.LatestVersionNumber
+      Cooldown: 60
       HealthCheckType: ELB
-      HealthCheckGracePeriod: 30
-      DesiredCapacity: 1
-      MaxSize: 3
-      MinSize: 1
+      HealthCheckGracePeriod: 60
+      Tags:
+        - Key: lab
+          Value: !Ref LabTagValue
+          PropagateAtLaunch: true
+        - Key: Name
+          Value: AutoScalingInstance
+          PropagateAtLaunch: true
 
-  week3AsgScalingPolicy:
+  ScaleOutPolicy:
     Type: AWS::AutoScaling::ScalingPolicy
     Properties:
-      AutoScalingGroupName: !Ref Week3Asg
-      PolicyType: TargetTrackingScaling
-      TargetTrackingConfiguration:
-        PredefinedMetricSpecification:
-          PredefinedMetricType: ASGAverageCPUUtilization
-        TargetValue: 50
+      PolicyName: ScaleOutPolicy
+      AutoScalingGroupName: !Ref AutoScalingGroup
+      PolicyType: SimpleScaling
+      AdjustmentType: ChangeInCapacity
+      ScalingAdjustment: 1
+      Cooldown: 60
+
+  ScaleInPolicy:
+    Type: AWS::AutoScaling::ScalingPolicy
+    Properties:
+      PolicyName: ScaleInPolicy
+      AutoScalingGroupName: !Ref AutoScalingGroup
+      PolicyType: SimpleScaling
+      AdjustmentType: ChangeInCapacity
+      ScalingAdjustment: -1
+      Cooldown: 60
+
+  HighCPUAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmDescription: Alarm to scale out when CPU greater than 50%
+      Namespace: AWS/EC2
+      MetricName: CPUUtilization
+      Dimensions:
+        - Name: AutoScalingGroupName
+          Value: !Ref AutoScalingGroup
+      Statistic: Average
+      Period: 60
+      EvaluationPeriods: 2
+      Threshold: 50
+      ComparisonOperator: GreaterThanThreshold
+      AlarmActions:
+        - !Ref ScaleOutPolicy
+      Tags:
+        - Key: Name
+          Value: AutoScalingHighCPUAlarm
+
+  LowCPUAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmDescription: Alarm to scale in when CPU less than or equals 50%
+      Namespace: AWS/EC2
+      MetricName: CPUUtilization
+      Dimensions:
+        - Name: AutoScalingGroupName
+          Value: !Ref AutoScalingGroup
+      Statistic: Average
+      Period: 60
+      EvaluationPeriods: 2
+      Threshold: 50
+      ComparisonOperator: LessThanOrEqualToThreshold
+      AlarmActions:
+        - !Ref ScaleInPolicy
+      Tags:
+        - Key: Name
+          Value: AutoScalingLowCPUAlarm
+
+Outputs:
+  LoadBalancerDNS:
+    Description: ALB DNS Name
+    Value: !GetAtt LoadBalancer.DNSName
