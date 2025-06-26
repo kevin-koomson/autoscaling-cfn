@@ -1,7 +1,6 @@
 template-file-path: autoscaling-automation.yml
 parameters:
-  - parameter-key: KeyName
-    parameter-value: vpc-lab-ec2-key-pair
-  - parameter-key: AmiId
-    parameter-value: ami-092ff8e60e2d51e19
+  KeyPairName: vpc-lab-ec2-key-pair
+  LabTagValue: week3_lab1
+  AmiId: ami-092ff8e60e2d51e19
 tags: {}
